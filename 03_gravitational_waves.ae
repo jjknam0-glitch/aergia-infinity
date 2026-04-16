@@ -1,0 +1,147 @@
+-- ════════════════════════════════════════════════════════════════
+-- 03_gravitational_waves.ae  —  LIGO event stream + compression
+--
+-- Demonstrates:
+--   • LIGO open data as a lazy stream of gravitational wave events
+--   • DeltaChain compression for waveform timeseries
+--   • Signal-to-noise ratio filtering on an infinite stream
+--   • Chirp mass computation from streaming events
+-- ════════════════════════════════════════════════════════════════
+
+import Sources  (openLIGO)
+import Compress (DeltaChain, WaveletModel, fit, decode, ratio, paramBytes)
+import Math     (sqrt, log, sin, cos)
+import Streams  (sfilter, smap, take, scan, from)
+
+-- ── The infinite LIGO event stream ────────────────────────────
+--
+-- In a real deployment this would be a live WebSocket or
+-- file-system watch on the GWOSC data releases.
+-- Here we use the mock source (structurally identical to real data).
+
+events : ∞LIGOEvent
+events = openLIGO
+
+-- ── Filter: high-significance events only ─────────────────────
+--
+-- Network SNR > 12 is a standard threshold for confident detections.
+-- This filter runs lazily — events below threshold are never stored.
+
+highSNR : ∞LIGOEvent
+highSNR = sfilter (\e -> e.network_matched_filter_snr > 12.0) events
+
+-- ── Chirp mass: the primary observable ────────────────────────
+--
+-- Mchirp = (m1 * m2)^(3/5) / (m1 + m2)^(1/5)
+-- This is what the matched filter actually measures — it is
+-- more precisely constrained than individual masses.
+
+chirpMass : LIGOEvent -> Float
+chirpMass e =
+  let m1    = e.mass_1_source
+      m2    = e.mass_2_source
+      numer = (m1 * m2) ^ 0.6
+      denom = (m1 + m2) ^ 0.2
+  in  numer / denom
+
+-- ── Classify merger type ───────────────────────────────────────
+--
+-- BBH: binary black hole  (both > 3 solar masses)
+-- NSBH: neutron star + black hole (one < 3)
+-- BNS: binary neutron star (both < 3)
+
+type MergerType = BBH | NSBH | BNS
+
+classifyMerger : LIGOEvent -> MergerType
+classifyMerger e =
+  let m1 = e.mass_1_source
+      m2 = e.mass_2_source
+  in  if m1 > 3.0 && m2 > 3.0 then BBH
+      else if m1 > 3.0 || m2 > 3.0 then NSBH
+      else BNS
+
+-- ── Waveform compression ───────────────────────────────────────
+--
+-- A 4096-sample gravitational wave strain timeseries at 4096 Hz
+-- is 32768 bytes raw (float64). The waveform has a very specific
+-- chirp structure that compresses extremely well.
+--
+-- DeltaChain: store initial value + quantised differences.
+-- For GW strain (slowly varying before merger, impulsive at merger),
+-- most deltas are near zero → massive compression.
+--
+-- WaveletModel: the chirp is sparse in wavelet space — most energy
+-- in a few high-frequency coefficients near merger time.
+
+compressStrain : [Float] -> CompressedStrain
+compressStrain strain =
+  let delta_model   = fit DeltaChain strain
+      wavelet_model = fit (WaveletModel 0.05) strain   -- keep top 5%
+      raw_bytes     = length strain * 8
+      delta_bytes   = paramBytes delta_model
+      wavelet_bytes = paramBytes wavelet_model
+  in  { raw_bytes     = raw_bytes
+      , delta_model   = delta_model
+      , wavelet_model = wavelet_model
+      , delta_ratio   = raw_bytes / delta_bytes
+      , wavelet_ratio = raw_bytes / wavelet_bytes
+      }
+
+-- ── Running statistics over the event stream ──────────────────
+
+type RunStats = { count : Int, totalMass : Float, meanChirp : Float }
+
+accumStats : RunStats -> LIGOEvent -> RunStats
+accumStats st e =
+  let n  = st.count + 1
+      mc = chirpMass e
+      tm = st.totalMass + e.total_mass
+      dm = (mc - st.meanChirp) / toFloat n   -- Welford online update
+  in  { count     = n
+      , totalMass = tm
+      , meanChirp = st.meanChirp + dm
+      }
+
+initStats : RunStats
+initStats = { count = 0, totalMass = 0.0, meanChirp = 0.0 }
+
+-- Running statistics as a stream — O(1) memory for any number of events.
+liveStats : ∞RunStats
+liveStats = scan accumStats initStats highSNR
+
+main : IO ()
+main = do
+  print "─── Æergia∞  LIGO Gravitational Wave Stream ───"
+
+  -- Fetch the first 20 high-SNR events
+  let detected = highSNR ~> 20
+  print ("High-SNR events detected: " ++ show (length detected))
+
+  -- Classify mergers
+  let bbh  = filter (\e -> classifyMerger e == BBH)  detected
+  let nsbh = filter (\e -> classifyMerger e == NSBH) detected
+  let bns  = filter (\e -> classifyMerger e == BNS)  detected
+  print ("  BBH:  " ++ show (length bbh))
+  print ("  NSBH: " ++ show (length nsbh))
+  print ("  BNS:  " ++ show (length bns))
+
+  -- Chirp masses
+  let chirps = map chirpMass detected
+  print ("Chirp masses (first 5): " ++ show (take 5 chirps))
+
+  -- Strain compression
+  print "─── Waveform Compression Demo ───"
+  let event0 = head detected
+  let strain = event0.strain_data.strain   -- forced lazily
+  let comp   = compressStrain strain
+  print ("  Raw strain:     " ++ show comp.raw_bytes ++ " bytes")
+  print ("  DeltaChain:     ratio " ++ show comp.delta_ratio ++ ":1")
+  print ("  WaveletModel5%: ratio " ++ show comp.wavelet_ratio ++ ":1")
+
+  -- Live stats at snapshot points
+  print "─── Running Statistics (snapshots) ───"
+  let snapshots = liveStats ~> 20
+  let final     = last snapshots
+  print ("After " ++ show final.count ++ " events:")
+  print ("  Mean chirp mass: " ++ show final.meanChirp ++ " M☉")
+  print ("  Total mass seen: " ++ show final.totalMass ++ " M☉")

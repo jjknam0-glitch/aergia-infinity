@@ -1,0 +1,62 @@
+-- ════════════════════════════════════════════════════════════════
+-- 01_hello_universe.ae  —  Æergia∞ introduction
+-- Run:  python -m aergia examples/01_hello_universe.ae
+-- ════════════════════════════════════════════════════════════════
+
+import Streams (primes, fibs, naturals, take, sfilter, smap, from)
+import Math    (isPrime, factorial)
+
+-- The simplest Æergia∞ program: an infinite stream, pulled on demand.
+-- primes is a value of type  ∞Int  — an infinite stream of integers.
+-- The  ~>  operator (demand) materialises exactly as many as asked for.
+
+first20Primes : [Int]
+first20Primes = primes ~> 20
+
+-- The 1000th prime — forces exactly 1000 elements, memoises them all.
+p1000 : Int
+p1000 = primes !! 999
+
+-- Fibonacci numbers, self-referentially defined.
+-- fibs = 0 :> 1 :> zipWith (+) fibs (tail fibs)
+first15Fibs : [Int]
+first15Fibs = fibs ~> 15
+
+-- Every even Fibonacci number — an infinite stream of a filtered stream.
+evenFibs : ∞Int
+evenFibs = sfilter (\n -> n `mod` 2 == 0) fibs
+
+-- Squares of naturals — mapping over an infinite stream.
+squares : ∞Int
+squares = smap (\n -> n * n) (from 0)
+
+-- Sum of the first n squares: Σ(k=0..n-1) k²
+-- Because of memoisation, calling squaresSum multiple times
+-- with overlapping n is free after the first call.
+squaresSum : Int -> Int
+squaresSum n = sum (squares ~> n)
+
+main : IO ()
+main = do
+  print "─── Æergia∞  Hello, Universe ───"
+
+  print "First 20 primes:"
+  print first20Primes
+
+  print "The 1000th prime:"
+  print p1000
+
+  print "First 15 Fibonacci numbers:"
+  print first15Fibs
+
+  print "First 10 even Fibonacci numbers:"
+  print (evenFibs ~> 10)
+
+  print "First 12 perfect squares:"
+  print (squares ~> 12)
+
+  print "Sum of first 100 squares:"
+  print (squaresSum 100)
+
+  print "Digits of π (first 30):"
+  print (pi ~> 30)

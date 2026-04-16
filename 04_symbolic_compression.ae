@@ -1,0 +1,176 @@
+-- ════════════════════════════════════════════════════════════════
+-- 04_symbolic_compression.ae
+-- The ∞ storage model: compress data to mathematical descriptions
+--
+-- This example shows what makes Æergia∞ genuinely different:
+-- instead of storing data, you store the RULE that describes it.
+--
+-- Key insight from Kolmogorov complexity theory:
+--   The most efficient representation of data is the shortest
+--   program that generates it. Æergia∞ makes this practical.
+-- ════════════════════════════════════════════════════════════════
+
+import Compress (FourierN, PolynomialN, BlackbodySpectrum,
+                 GaussianMixture, DeltaChain, WaveletModel, auto,
+                 fit, decode, ratio, paramBytes)
+import Math     (sin, cos, sqrt, exp, pi)
+import Streams  (from, smap, take)
+
+-- ─────────────────────────────────────────────────────────────
+-- SECTION 1: Mathematical sequences store as symbolic rules
+-- ─────────────────────────────────────────────────────────────
+
+-- A sine wave: 10,000 points could be described as just
+-- "A*sin(f*t + φ)" — 3 floating-point numbers.
+-- FourierN 1 does exactly this.
+
+sineWave : [Float]
+sineWave = map (\n -> sin (toFloat n * 0.01)) [0..999]
+
+-- Compress to 1 Fourier coefficient: stores 2 numbers (amplitude + phase)
+-- 10000 points × 8 bytes = 80,000 bytes   →   1 coefficient × 16 bytes
+-- Ratio: 5000:1
+
+sineModel : FourierModel
+sineModel = fit (FourierN 1) sineWave
+
+-- A noisy signal needs more coefficients to capture the noise structure.
+-- FourierN 32 captures 99%+ of a typical spectrum with 32 coefficients.
+
+noisySine : [Float]
+noisySine = map (\n ->
+    sin (toFloat n * 0.1) +
+    0.1 * sin (toFloat n * 0.37 + 1.2) +
+    0.05 * cos (toFloat n * 0.71)
+  ) [0..4095]
+
+noisyModel : FourierModel
+noisyModel = fit (FourierN 32) noisySine
+
+-- ─────────────────────────────────────────────────────────────
+-- SECTION 2: Astronomical spectra → 2 floats
+-- ─────────────────────────────────────────────────────────────
+
+-- A stellar blackbody spectrum: energy emitted at each wavelength.
+-- The Planck function needs only temperature T and amplitude A.
+-- An entire star's spectrum → 2 float64 values = 16 bytes.
+
+-- Simulate a G-type star spectrum (like the Sun, T ~ 5778 K)
+simulateSolarSpectrum : [Float]
+simulateSolarSpectrum =
+  let T = 5778.0         -- Kelvin
+      h = 6.626e-34
+      c = 3.0e8
+      k = 1.381e-23
+  in  map (\i ->
+        let lam = (300.0 + toFloat i * 0.7) * 1.0e-9   -- 300-1000 nm
+        in  (2.0 * h * c * c / (lam ^ 5)) /
+            (exp (h * c / (lam * k * T)) - 1.0)
+      ) [0..999]
+
+solarModel : BlackbodyModel
+solarModel = fit BlackbodySpectrum simulateSolarSpectrum
+
+-- ─────────────────────────────────────────────────────────────
+-- SECTION 3: Slow-changing sensor data → delta chain
+-- ─────────────────────────────────────────────────────────────
+
+-- A temperature sensor reading every minute for a day (1440 readings).
+-- Temperature changes slowly — consecutive differences are near zero.
+-- DeltaChain with quantisation to 0.1°C collapses most deltas to 0.
+
+temperatureStream : [Float]
+temperatureStream =
+  map (\n ->
+    20.0 +                                        -- base temp
+    5.0 * sin (toFloat n * 6.283 / 1440.0) +     -- daily cycle
+    0.5 * sin (toFloat n * 6.283 / 60.0) +       -- hourly variation
+    0.1 * cos (toFloat n * 0.3)                   -- noise
+  ) [0..1439]
+
+tempModel : DeltaModel
+tempModel = fit DeltaChain temperatureStream
+
+-- ─────────────────────────────────────────────────────────────
+-- SECTION 4: The auto-selector
+-- ─────────────────────────────────────────────────────────────
+--
+-- The  auto  compressor tries all models and picks the best one
+-- for a given dataset within a byte budget.
+
+polyTrend : [Float]
+polyTrend = map (\n -> 2.0 * toFloat n * toFloat n - 3.0 * toFloat n + 7.0) [0..999]
+
+autoPolyModel : CompressModel
+autoPolyModel = auto polyTrend   -- will select PolynomialN
+
+gaussDist : [Float]
+gaussDist =
+  map (\n ->
+    let x = (toFloat n - 500.0) / 80.0
+    in  exp (-0.5 * x * x)
+  ) [0..999]
+
+autoGaussModel : CompressModel
+autoGaussModel = auto gaussDist   -- will select GaussianMixture(1)
+
+-- ─────────────────────────────────────────────────────────────
+-- SECTION 5: The symbolic archive — ∞ storage
+-- ─────────────────────────────────────────────────────────────
+--
+-- A SymbolicArchive stores records symbolically.
+-- 1 million spectra × 4096 points = 32 GB raw
+-- With Fourier32:  1 million × 64 floats = 512 MB (64:1)
+-- With Blackbody:  1 million × 2 floats  = 16 MB  (2048:1)
+-- With auto:       depends on data, typically 100-1000:1
+
+-- How many spectra can we store in 1 GB with each model?
+specsPerGigaByte : String -> Int -> Int
+specsPerGigaByte modelName bytesPerSpec =
+  1_000_000_000 / bytesPerSpec
+
+main : IO ()
+main = do
+  print "─── Æergia∞  Symbolic Compression Showcase ───"
+  print ""
+
+  -- Sine wave
+  print "── Sine wave (1000 points) ──"
+  print ("  Raw:           8000 bytes")
+  print ("  FourierN 1:    " ++ show (paramBytes sineModel) ++ " bytes  ratio " ++ show (8000 / paramBytes sineModel) ++ ":1")
+  print ("  Reconstructed: " ++ show (take 5 (decode sineModel 1000)))
+
+  -- Noisy signal
+  print ""
+  print "── Noisy multi-tone signal (4096 points) ──"
+  print ("  Raw:           32768 bytes")
+  print ("  FourierN 32:   " ++ show (paramBytes noisyModel) ++ " bytes  ratio " ++ show (32768 / paramBytes noisyModel) ++ ":1")
+
+  -- Solar spectrum
+  print ""
+  print "── Solar spectrum (1000 points, blackbody model) ──"
+  print ("  Raw:           8000 bytes")
+  print ("  Blackbody:     " ++ show (paramBytes solarModel) ++ " bytes  (just T and A!)")
+  print ("  Compression:   " ++ show (8000 / paramBytes solarModel) ++ ":1")
+
+  -- Temperature stream
+  print ""
+  print "── Temperature stream (1440 readings = 1 day) ──"
+  print ("  Raw:           11520 bytes")
+  print ("  DeltaChain:    " ++ show (paramBytes tempModel) ++ " bytes")
+  print ("  Ratio:         " ++ show (11520 / paramBytes tempModel) ++ ":1")
+
+  -- Auto models
+  print ""
+  print "── Auto-selector results ──"
+  print ("  Quadratic trend:    " ++ show (paramBytes autoPolyModel) ++ " bytes (vs 8000 raw)")
+  print ("  Gaussian peak:      " ++ show (paramBytes autoGaussModel) ++ " bytes (vs 8000 raw)")
+
+  -- The big picture
+  print ""
+  print "── The ∞ Archive — 1 GB storage capacity ──"
+  print ("  Raw 4096-pt spectra per GB:   " ++ show (specsPerGigaByte "raw"     32768))
+  print ("  FourierN32 per GB:            " ++ show (specsPerGigaByte "fourier" 512))
+  print ("  Blackbody per GB:             " ++ show (specsPerGigaByte "bb"      16))
+  print ("  With blackbody: 1 GB stores the spectra of 62.5 million stars.")
+  print ("  The entire Gaia catalogue (1.8B stars) in ~30 GB.")

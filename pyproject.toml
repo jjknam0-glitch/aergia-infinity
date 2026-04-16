@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "aergia-infinity"
+version = "0.1.0"
+description = "Æergia∞ — a lazy, symbolic, stream-oriented language for infinite data"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11"
+authors = [
+  { name = "Æergia∞ Project" }
+]
+keywords = [
+  "programming-language", "lazy-evaluation", "symbolic-compression",
+  "astronomy", "streams", "infinite-data", "scientific-computing"
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Astronomy",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+science = [
+  "numpy>=1.24",
+  "scipy>=1.11",
+  "astropy>=5.3",
+]
+streaming = [
+  "websocket-client>=1.6",
+  "kafka-python>=2.0",
+  "paho-mqtt>=1.6",
+]
+databases = [
+  "psycopg2-binary>=2.9",
+  "pymongo>=4.5",
+  "influxdb-client>=1.37",
+]
+files = [
+  "pyarrow>=13.0",
+  "h5py>=3.9",
+  "netCDF4>=1.6",
+]
+all = [
+  "aergia-infinity[science]",
+  "aergia-infinity[streaming]",
+  "aergia-infinity[databases]",
+  "aergia-infinity[files]",
+]
+dev = [
+  "pytest>=7.4",
+  "pytest-cov>=4.1",
+  "pyflakes>=3.1",
+]
+
+[project.scripts]
+aergia = "aergia.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_USERNAME/Aergia-infinity"
+Repository = "https://github.com/YOUR_USERNAME/Aergia-infinity"
+Issues = "https://github.com/YOUR_USERNAME/Aergia-infinity/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short -q"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aergia*"]
